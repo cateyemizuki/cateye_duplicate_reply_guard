@@ -44,6 +44,11 @@
 - **已回复过的目标**：``maisaka.reply.before_post_process`` 每次回复生成**恰好触发一次**
   （``reply.py:396-402``，生成成功且非空才会触发），用它记录本轮回复目标，
   并以"轮标记"把判定传给发送阶段——这样同一条回复被拆成多个分段时不会被误判成重复。
+- **延时补充放行（默认开，阈值 30 秒）**：重复回复拦截只拦"短时间内的重复"。对**非自己**的目标消息，
+  距上次回复已**达到或超过** ``late_repeat_after_seconds``（默认 30 秒，开关与时长均可配）时，
+  本次回复按**补充说明**放行——与宿主 ``reply.py:_find_recent_reply_to_target``
+  "你现在想再次回复这条消息，进行补充"的设计对齐。本项**只放宽、不会收紧**：阈值大于去重窗口时
+  以去重窗口为准。自回复拦截不受影响（自己的消息恒拦）。
 - **会话类型（私聊豁免）**：出站消息构建时**只有群聊才会填 ``message_info.group_info``**
   （``send_service.py:550-582``），私聊恒为 ``None``；该字段会随 Hook 载荷传过来，
   所以从 ``send_service.before_send`` / ``after_send`` 就能零 RPC 学到会话类型。
@@ -71,7 +76,7 @@ from maibot_sdk.types import CONFIG_RELOAD_SCOPE_SELF, ErrorPolicy, HookMode, Ho
 
 from .intercept_log import InterceptLogger
 
-SUPPORTED_CONFIG_VERSION = "1.0.0"
+SUPPORTED_CONFIG_VERSION = "1.1.0"
 
 #: 被守护的内置工具名（只有 reply 会产出可见回复）。
 GUARDED_TOOL_NAME = "reply"
@@ -356,6 +361,39 @@ class DuplicateReplyGuardSectionConfig(PluginConfigBase):
             ),
         },
     )
+    allow_late_repeat: bool = Field(
+        default=True,
+        description="延时补充放行：对非自己的目标消息，距上次回复超过阈值后放行本次回复（视为补充说明）",
+        json_schema_extra={
+            "label": "允许延时补充",
+            **_ui_i18n(
+                "允许延时补充",
+                "推荐开启。只拦短时间内的重复；隔了一会儿的「再补一句」放行，与宿主的补充回复设计一致。"
+                "关闭后：去重窗口内一律不补。",
+                "Allow late supplement",
+                "Recommended. Only rapid repeats are blocked; a later follow-up is allowed, matching the host's "
+                "supplement design. When off, nothing is allowed inside the dedupe window.",
+            ),
+        },
+    )
+    late_repeat_after_seconds: int = Field(
+        default=30,
+        ge=5,
+        le=3600,
+        description="延时补充阈值（秒）：距上次回复达到或超过该时长后，允许对同一非自身目标再次回复",
+        json_schema_extra={
+            "label": "延时补充阈值（秒）",
+            **_ui_i18n(
+                "延时补充阈值（秒）",
+                "仅在开启「允许延时补充」时生效。窗口内、但距上次回复已超过该秒数 → 放行本次（按补充说明）。"
+                "设得比去重窗口还大时以去重窗口为准（本项不会收紧拦截）。",
+                "Late supplement threshold (seconds)",
+                "Only used when late supplement is on. Inside the dedupe window but past this many seconds since the "
+                "last reply -> this one is allowed as a supplement. Values above the dedupe window are clamped by the "
+                "window itself; this option never tightens blocking.",
+            ),
+        },
+    )
 
 
 class InterceptLogSectionConfig(PluginConfigBase):
@@ -467,7 +505,7 @@ class DuplicateReplyGuardPlugin(MaiBotPlugin):
         log_path = self._intercept_log.path if self._intercept_log is not None else "未启用"
         self.ctx.logger.info(
             "插件已加载。总开关=%s；自回复拦截=%s（生成前剔除=%s / 发送前兜底=%s / 上下文扫描=%s / 出站台账=%s）；"
-            "重复回复拦截=%s（生成前剔除=%s / 发送前兜底=%s / 去重窗口=%s 秒）；拦截独立日志=%s",
+            "重复回复拦截=%s（生成前剔除=%s / 发送前兜底=%s / 去重窗口=%s 秒 / 延时补充=%s%s）；拦截独立日志=%s",
             self.config.plugin.enabled,
             self.config.self_reply_guard.enabled,
             self.config.self_reply_guard.strip_at_planner,
@@ -478,6 +516,10 @@ class DuplicateReplyGuardPlugin(MaiBotPlugin):
             self.config.duplicate_reply_guard.strip_at_planner,
             self.config.duplicate_reply_guard.abort_at_send,
             self.config.duplicate_reply_guard.dedupe_window_seconds,
+            "开" if self.config.duplicate_reply_guard.allow_late_repeat else "关",
+            f"（阈值 {self.config.duplicate_reply_guard.late_repeat_after_seconds} 秒）"
+            if self.config.duplicate_reply_guard.allow_late_repeat
+            else "",
             log_path,
         )
 
@@ -492,10 +534,14 @@ class DuplicateReplyGuardPlugin(MaiBotPlugin):
             return
         self._rebuild_intercept_log()
         self.ctx.logger.info(
-            "插件配置已更新：自回复拦截=%s，重复回复拦截=%s（去重窗口=%s 秒）",
+            "插件配置已更新：自回复拦截=%s，重复回复拦截=%s（去重窗口=%s 秒，延时补充=%s%s）",
             self.config.self_reply_guard.enabled,
             self.config.duplicate_reply_guard.enabled,
             self.config.duplicate_reply_guard.dedupe_window_seconds,
+            "开" if self.config.duplicate_reply_guard.allow_late_repeat else "关",
+            f"（阈值 {self.config.duplicate_reply_guard.late_repeat_after_seconds} 秒）"
+            if self.config.duplicate_reply_guard.allow_late_repeat
+            else "",
         )
 
     # ------------------------------------------------------------------
@@ -819,15 +865,29 @@ class DuplicateReplyGuardPlugin(MaiBotPlugin):
         return True
 
     def _is_recent_reply_target(self, session_id: str, target_id: str, now: float) -> bool:
+        """该目标是否属于"短期内已回复过"（命中才拦；延时补充放行返回 False）。"""
+
         entries = self._replied_targets.get(session_id)
         if not entries:
             return False
         last_at = entries.get(target_id)
         if last_at is None:
             return False
-        if now - last_at > float(self.config.duplicate_reply_guard.dedupe_window_seconds):
+        elapsed = now - last_at
+        if elapsed > float(self.config.duplicate_reply_guard.dedupe_window_seconds):
+            return False
+        # 去重窗口内、但已过延时补充阈值 → 视为"补充说明"，放行本次回复。
+        if self._late_repeat_grace_applies(elapsed):
             return False
         return True
+
+    def _late_repeat_grace_applies(self, elapsed: float) -> bool:
+        """延时补充放行是否生效（距上次回复达到阈值即放行；只放宽拦截，不会收紧）。"""
+
+        config = self.config.duplicate_reply_guard
+        if not bool(config.allow_late_repeat):
+            return False
+        return elapsed >= float(config.late_repeat_after_seconds)
 
     def _describe(self, feature: str, session_id: str, target_id: str, now: float, *, stage: str) -> str:
         """构造人类可读的拦截说明（写入独立日志）。"""
@@ -835,13 +895,22 @@ class DuplicateReplyGuardPlugin(MaiBotPlugin):
         if feature == FEATURE_SELF:
             base = f"目标消息 {target_id} 是 bot 自己发出的消息（命中自身消息台账），按自回复拦截"
         else:
-            window = int(self.config.duplicate_reply_guard.dedupe_window_seconds)
+            config = self.config.duplicate_reply_guard
+            window = int(config.dedupe_window_seconds)
             last_at = (self._replied_targets.get(session_id) or {}).get(target_id)
             if last_at is not None:
-                base = (
-                    f"目标消息 {target_id} 在 {window} 秒去重窗口内已被回复过"
-                    f"（上次 {max(0, int(now - last_at))} 秒前），按重复回复拦截"
-                )
+                elapsed = max(0, int(now - last_at))
+                if bool(config.allow_late_repeat):
+                    grace = int(config.late_repeat_after_seconds)
+                    base = (
+                        f"目标消息 {target_id} 在 {window} 秒去重窗口内已被回复过"
+                        f"（上次 {elapsed} 秒前，未达到 {grace} 秒延时补充阈值），按重复回复拦截"
+                    )
+                else:
+                    base = (
+                        f"目标消息 {target_id} 在 {window} 秒去重窗口内已被回复过"
+                        f"（上次 {elapsed} 秒前，延时补充放行已关闭），按重复回复拦截"
+                    )
             else:
                 base = f"目标消息 {target_id} 在 {window} 秒去重窗口内已被回复过，按重复回复拦截"
         stage_text = {

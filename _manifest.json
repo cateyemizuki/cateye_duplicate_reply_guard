@@ -1,9 +1,9 @@
 {
   "manifest_version": 2,
   "id": "github.cateye.duplicate-reply-guard",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "name": "自回复与重复回复拦截",
-  "description": "生成前剔除 + 发送前中止两层拦截：阻止 MaiBot 回复自己的消息，以及在同一时间窗内重复回复同一条目标消息。两个功能可分别开关，拦截行为写入插件独立日志。",
+  "description": "生成前剔除 + 发送前中止两层拦截：阻止 MaiBot 回复自己的消息，以及在同一时间窗内重复回复同一条目标消息（距上次回复超过可配置的延时阈值后放行，视为补充说明）。两个功能可分别开关，拦截行为写入插件独立日志。",
   "author": { "name": "cateye", "url": "https://github.com/cateyemizuki" },
   "license": "MIT",
   "urls": {
