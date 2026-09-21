@@ -1,4 +1,13 @@
+# 运行时配置（Runner 生成，勿提交）
 /config.toml
+
+# 宿主分配的数据目录（运行时产生）
+/data/
+
+# Python
 __pycache__/
 *.pyc
 .venv/
+
+# 插件中心 Issue 提交文档（本地使用，不随插件上传）
+/ISSUE_SUBMISSION.md

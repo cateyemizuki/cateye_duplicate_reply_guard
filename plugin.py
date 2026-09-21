@@ -76,7 +76,7 @@ from maibot_sdk.types import CONFIG_RELOAD_SCOPE_SELF, ErrorPolicy, HookMode, Ho
 
 from .intercept_log import InterceptLogger
 
-SUPPORTED_CONFIG_VERSION = "1.1.0"
+SUPPORTED_CONFIG_VERSION = "1.1.1"
 
 #: 被守护的内置工具名（只有 reply 会产出可见回复）。
 GUARDED_TOOL_NAME = "reply"
@@ -1051,9 +1051,20 @@ class DuplicateReplyGuardPlugin(MaiBotPlugin):
         if not data_dir:
             self.ctx.logger.warning("ctx.paths.data_dir 不可用，拦截独立日志已禁用")
             return
+        # 路径防护：配置里的文件名只取文件名部分（剥离目录，并拒绝 `.` / `..`），
+        # 日志永远落在插件数据目录内。
+        raw_file_name = str(self.config.intercept_log.file_name or "").strip()
+        normalized = Path(raw_file_name).name
+        file_name = normalized if normalized not in ("", ".", "..") else "intercept.jsonl"
+        if file_name != raw_file_name:
+            self.ctx.logger.warning(
+                "拦截日志文件名 %r 含目录或绝对路径，已规范化为 %r（日志只写入插件数据目录）",
+                raw_file_name,
+                file_name,
+            )
         self._intercept_log = InterceptLogger(
             directory=Path(str(data_dir)),
-            file_name=str(self.config.intercept_log.file_name or "intercept.jsonl"),
+            file_name=file_name,
             max_bytes=int(self.config.intercept_log.max_file_size_kb) * 1024,
             backup_count=int(self.config.intercept_log.backup_count),
             on_error=lambda message: self.ctx.logger.warning("%s", message),

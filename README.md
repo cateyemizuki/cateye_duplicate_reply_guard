@@ -1,6 +1,6 @@
 # 自回复与重复回复拦截（MaiBot 插件）
 
-> 插件 ID：`github.cateye.duplicate-reply-guard`　｜　版本：`1.1.0`　｜　许可证：MIT
+> 插件 ID：`github.cateye.duplicate-reply-guard`　｜　版本：`1.1.1`　｜　许可证：MIT
 > 逐版本变更见 [CHANGELOG.md](CHANGELOG.md)
 
 **生成前剔除 + 发送前中止**两层硬拦截，解决两个由 Planner（决策模型）自主决策引发、而宿主默认**没有任何硬拦截**的问题：
@@ -108,7 +108,7 @@
 | 字段 | 类型 | 默认 | 说明 |
 |---|---|---|---|
 | `enabled` | bool | `true` | 是否写独立日志文件 |
-| `file_name` | str | `intercept.jsonl` | 文件名（位于插件 `data_dir` 下） |
+| `file_name` | str | `intercept.jsonl` | 文件名（位于插件 `data_dir` 下）。**只取文件名部分**：写成 `../x.jsonl` / `sub/x.jsonl` / 绝对路径会被剥离目录，`.`/`..` 或空值回退默认名，日志恒写在 `data_dir` 内（发生规范化时记一条 warning） |
 | `max_file_size_kb` | int | `1024` | 单文件上限，超过后轮转（16–102400） |
 | `backup_count` | int | `3` | 保留的历史份数（0 = 直接截断） |
 | `echo_to_main_log` | bool | `false` | 是否同时打到宿主主日志 |
@@ -190,6 +190,10 @@
 ```
 data/plugins/github.cateye.duplicate-reply-guard/intercept.jsonl
 ```
+
+> **路径防护**：`file_name` 只取文件名部分，日志本体与轮转出来的 `.1`/`.2`/`.3` 备份
+> **永远只写在插件 `data_dir` 内**——配置里写 `../x.jsonl`、`sub/x.jsonl`、`D:\x.jsonl`
+> 或 `..` 都不会写到目录之外（被规范化时会在加载日志里给出 warning，不静默改写）。
 
 ### 字段
 
@@ -305,6 +309,7 @@ cateye_duplicate_reply_guard/
 
 | 版本 | 变更 |
 |------|------|
+| 1.1.1 | **路径防护**：`[intercept_log].file_name` 只取文件名部分（`../x.jsonl` / `sub/x.jsonl` / 绝对路径会被剥离目录，`''`/`.`/`..` 回退默认名），日志与轮转备份恒写在插件 `data_dir` 内，规范化时记 warning；`InterceptLogger` 内部同样设防 |
 | 1.1.0 | 新增 `[duplicate_reply_guard]` 的**延时补充放行**：`allow_late_repeat`（默认开，可关）+ `late_repeat_after_seconds`（默认 30 秒，5–3600 可调）——对**非自己**的目标消息，距上次回复达到阈值即按"补充说明"放行；拦截记录 `detail` 与加载/配置更新日志同步补上该项状态 |
 | 1.0.0 | 首版：自回复拦截 + 重复回复拦截，每个功能含"生成前剔除"与"发送前中止"两个阶段；自回复默认**私聊豁免**（会话类型零 RPC 从出站载荷学得）；4 节配置 + 字段级/节级 zh-CN·en 双语翻译；拦截行为写入独立 JSON Lines 日志（含大小轮转）；零能力依赖 |
 

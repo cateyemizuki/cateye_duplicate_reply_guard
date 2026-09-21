@@ -41,7 +41,11 @@ class InterceptLogger:
         on_error: Optional[Callable[[str], None]] = None,
     ) -> None:
         self._directory = Path(directory)
-        self._file_name = file_name or "intercept.jsonl"
+        #: 路径防护：只取文件名部分，并拒绝 `''` / `.` / `..` 这类"仍是目录"的名字。
+        #: 配置里写成 `../x.jsonl` / `sub/x.jsonl` / 绝对路径（如 `D:\x.jsonl`）/ `..` 时，
+        #: 都不会把日志写到插件数据目录之外。
+        normalized = Path(str(file_name or "")).name
+        self._file_name = normalized if normalized not in ("", ".", "..") else "intercept.jsonl"
         self._max_bytes = int(max_bytes)
         self._backup_count = max(0, int(backup_count))
         self._on_error = on_error
